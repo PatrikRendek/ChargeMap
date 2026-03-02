@@ -64,8 +64,6 @@ let routingControl = null;
 let isInteractingWithList = false;
 /** @type {L.CircleMarker[]} Array to keep track of temporary small POI markers near a charger */
 let activePoiMarkers = [];
-<<<<<<< HEAD
-=======
 /** @type {Set<number>} Set to keep track of user favorite station IDs */
 let userFavorites = new Set();
 
@@ -123,7 +121,6 @@ async function toggleFavorite(stationId, stationName, elementIdentifier) {
         console.error("Failed to toggle favorite:", err);
     }
 }
->>>>>>> 3ef2a01 (Feat: Add Favorite stations and IP Geolocation map centering)
 
 /**
  * Clears the currently active route and routing panel from the map.
