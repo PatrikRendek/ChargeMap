@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Charge Map</title>
+    <!-- Css pre Leaflet -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.css" />
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'stations/css/map.css' %}">
+</head>
+<body>
+    
+    <div id="sidebar">
+        <div class="sidebar-header">
+            <h1 class="sidebar-title">ChargeMap</h1>
+            <div class="search-container">
+                <input type="text" id="searchInput" class="search-input" placeholder="Search address, city, POI..." autocomplete="off">
+                <button id="searchBtn" class="search-btn">Search</button>
+                <div id="autocomplete-list" class="autocomplete-items" style="display: none;"></div>
+            </div>
+        </div>
+        <div id="stationList" class="sidebar-content">
+            <!-- Stations will be populated here by JavaScript -->
+        </div>
+    </div>
+
+    <div id="map"></div>
+    
+    <div class="user-header">
+        <span>Logged in as: <b>{{ user.username }}</b></span>
+        <form action="{% url 'logout' %}" method="post" style="margin: 0;">
+            {% csrf_token %}
+            <button type="submit" class="btn-logout">Sign Out</button>
+        </form>
+    </div>
+
+    <!-- JS knižnica Leaflet -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Leaflet Routing Machine JS -->
+    <script src="https://unpkg.com/leaflet-routing-machine@latest/dist/leaflet-routing-machine.js"></script>
+
+    <!-- Náš vyextrahovaný JS pre mapu, trasy a UI -->
+    <script src="{% static 'stations/js/map.js' %}"></script>
+</body>
+</html>

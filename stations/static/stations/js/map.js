@@ -1,0 +1,385 @@
+/**
+ * @fileoverview Main JavaScript logic for the ChargeMap application.
+ * Handles Leaflet map initialization, fetching charging stations from the
+ * backend proxy (OpenChargeMap API), geocoding locations via Nominatim, 
+ * autocomplete search suggestions, and routing via Leaflet Routing Machine.
+ */
+
+// 1. Initialize the map, centered on Slovakia by default
+const map = L.map('map').setView([48.669, 19.699], 8);
+
+// 2. Add base tile layer (OpenStreetMap)
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+}).addTo(map);
+
+// Global variables
+/** @type {L.Marker[]} Array to keep track of current charging station markers */
+let markers = [];
+/** @type {L.Marker|null} Marker denoting the user-searched destination or POI */
+let searchMarker = null;
+/** @type {L.Routing.Control|null} Instance of the Leaflet Routing Machine control */
+let routingControl = null;
+/** @type {boolean} Flag to prevent map moveend event from re-fetching data during flyTo animations */
+let isInteractingWithList = false;
+
+/**
+ * Clears the currently active route and routing panel from the map.
+ */
+function clearRoute() {
+    if (routingControl) {
+        map.removeControl(routingControl);
+        routingControl = null;
+    }
+}
+
+/**
+ * 3. Fetches charging stations within the current map bounding box from the backend API.
+ * Clears existing markers and populates the map and sidebar with the new data.
+ */
+async function fetchChargers() {
+    const bounds = map.getBounds();
+    const boundingBox = `(${bounds.getSouth()},${bounds.getWest()}),(${bounds.getNorth()},${bounds.getEast()})`;
+    const apiUrl = `/api/chargers/?boundingbox=${boundingBox}`;
+    const listContainer = document.getElementById('stationList');
+
+    try {
+        listContainer.innerHTML = '<div style="text-align:center; padding: 20px; color:#64748b;">Loading stations...</div>';
+
+        const response = await fetch(apiUrl);
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const chargingStations = await response.json();
+
+        // Remove old markers from the map and clear the array
+        markers.forEach(marker => map.removeLayer(marker));
+        markers = [];
+        // Clear the sidebar list container
+        listContainer.innerHTML = '';
+
+        if (!Array.isArray(chargingStations) || chargingStations.length === 0) {
+            listContainer.innerHTML = '<div style="text-align:center; padding: 20px; color:#64748b;">No stations found in this area. Move map to explore.</div>';
+            return;
+        }
+
+        // Add results to the map and sidebar
+        chargingStations.forEach(station => {
+            if (station.AddressInfo && station.AddressInfo.Latitude && station.AddressInfo.Longitude) {
+                const lat = station.AddressInfo.Latitude;
+                const lng = station.AddressInfo.Longitude;
+
+                // Extract detailed information from OCM API response
+                const title = station.AddressInfo.Title || 'Unknown station';
+                const address = `${station.AddressInfo.AddressLine1 || ''} ${station.AddressInfo.Town || ''}`.trim() || 'Address unavailable';
+                const usageCost = station.UsageCost ? `<br/><b>Cost:</b> ${station.UsageCost}` : '';
+                const operator = station.OperatorInfo ? station.OperatorInfo.Title : 'Unknown operator';
+                const points = station.NumberOfPoints ? `<br/><b>Points:</b> ${station.NumberOfPoints}x` : '';
+
+                // Station Status / Occupancy Logic
+                let statusInfo = '<span style="color:#94a3b8; font-weight:600;">&#x2022; Unknown status</span>';
+                if (station.StatusType) {
+                    if (station.StatusType.IsOperational === true || station.StatusType.ID === 50) {
+                        statusInfo = `<span style="color:#10b981; font-weight:600;">&#x2022; Operational</span>`;
+                    } else if (station.StatusType.IsOperational === false) {
+                        statusInfo = `<span style="color:#ef4444; font-weight:600;">&#x2022; ${station.StatusType.Title || 'Offline'}</span>`;
+                    } else if (station.StatusType.Title) {
+                        statusInfo = `<span style="color:#f59e0b; font-weight:600;">&#x2022; ${station.StatusType.Title}</span>`;
+                    }
+                }
+
+                // Retrieve high-resolution image if available
+                let popupImageHtml = '';
+                let cardImageHtml = '';
+                if (station.MediaItems && station.MediaItems.length > 0) {
+                    // Prefer full resolution image over the small thumbnail
+                    const imgUrl = station.MediaItems[0].ItemURL || station.MediaItems[0].ItemThumbnailURL;
+                    popupImageHtml = `<img src="${imgUrl}" alt="Station" style="width:100%; height:120px; object-fit:cover; border-radius:8px; margin-bottom:8px; border: 1px solid #e2e8f0;">`;
+                    cardImageHtml = `<img src="${imgUrl}" alt="Station" style="width:100%; height:120px; object-fit:cover; border-radius:8px; margin-bottom:8px; border: 1px solid #e2e8f0;">`;
+                }
+
+                // Extract power information
+                let powerInfo = '';
+                if (station.Connections && station.Connections.length > 0) {
+                    const maxKw = Math.max(...station.Connections.map(c => c.PowerKW || 0));
+                    if (maxKw > 0) powerInfo = `<br/><b>Max power:</b> ${maxKw} kW`;
+                }
+
+                // Route navigation button shown in the map popup
+                const navigateBtnHtml = `<div style="margin-top: 10px; text-align: center;">
+                    <button onclick="calculateRouteTo(${lat}, ${lng})" style="background:linear-gradient(135deg, #0284c7, #059669); color:white; border:none; padding:6px 12px; border-radius:15px; cursor:pointer; font-weight:600; font-family:'Outfit', sans-serif;">Navigate Here</button>
+                </div>`;
+
+                // HTML content for the map Marker popup
+                const popupContent = `
+                    <div style="font-size: 14px; font-family: 'Outfit', sans-serif; min-width: 200px;">
+                        ${popupImageHtml}
+                        <h3 style="margin: 0 0 5px 0; color: #0284c7; font-size: 16px;">${title}</h3>
+                        <div style="color: #64748b; font-size: 12px; margin-bottom: 5px;">${operator} ${statusInfo}</div>
+                        ${address}
+                        ${usageCost}
+                        ${points}
+                        ${powerInfo}
+                        ${navigateBtnHtml}
+                    </div>
+                `;
+
+                // Identify correct pin color based on operational status
+                let pinColor = '#0284c7'; // Default blue
+                if (station.StatusType && station.StatusType.IsOperational === false) {
+                    pinColor = '#ef4444'; // Red for offline
+                } else if (station.StatusType && station.StatusType.IsOperational === true) {
+                    pinColor = '#10b981'; // Green for operational
+                }
+
+                // Custom visually appealing electric lightning bolt icon for chargers
+                const chargerIcon = L.divIcon({
+                    html: `<div style="background-color: ${pinColor}; width: 34px; height: 34px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 8px rgba(0,0,0,0.3); border: 2.5px solid white; transition: all 0.2s;">
+                             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                           </div>`,
+                    className: 'custom-charger-icon',
+                    iconSize: [34, 34],
+                    iconAnchor: [17, 17],
+                    popupAnchor: [0, -17]
+                });
+
+                // Create and assign the map marker
+                const marker = L.marker([lat, lng], { icon: chargerIcon }).bindPopup(popupContent);
+                marker.addTo(map);
+                markers.push(marker);
+
+                // Create the charging station card for the left sidebar list
+                const stationCard = document.createElement('div');
+                stationCard.className = 'station-item';
+                stationCard.innerHTML = `
+                    ${cardImageHtml}
+                    <h4 class="station-title">${title}</h4>
+                    <div style="font-size:11px; color:#94a3b8; margin-bottom:4px; text-transform: uppercase; font-weight:600;">${operator} ${statusInfo}</div>
+                    <div class="station-address">${address}</div>
+                    <div style="font-size:12px; color:#334155; display:flex; justify-content:space-between; align-items:center;">
+                        <span>${powerInfo.replace('<br/>', '') || 'Power n/a'}</span>
+                        <button onclick="event.stopPropagation(); calculateRouteTo(${lat}, ${lng})" style="background:#e2e8f0; color:#0f172a; border:none; padding:4px 10px; border-radius:12px; cursor:pointer; font-family:'Outfit',sans-serif; font-size:11px; font-weight:600;">Route</button>
+                    </div>
+                `;
+
+                // Hovering over the card opens the map popup subtly
+                stationCard.addEventListener('mouseenter', () => {
+                    marker.openPopup();
+                });
+
+                // Clicking the card centers the map on the station and opens the popup
+                stationCard.onclick = () => {
+                    const targetLatLng = L.latLng(lat, lng);
+
+                    // If the map is already centered nearby at the correct zoom level, skip the flyTo animation
+                    if (map.getZoom() === 15 && map.getCenter().distanceTo(targetLatLng) < 10) {
+                        marker.openPopup();
+                        return;
+                    }
+
+                    // Engage the safety lock to prevent moveend from triggering a new fetch during the flight
+                    isInteractingWithList = true;
+                    map.flyTo([lat, lng], 15);
+                    marker.openPopup();
+                };
+                listContainer.appendChild(stationCard);
+            }
+        });
+    } catch (error) {
+        console.error("Error fetching chargers from OpenChargeMap:", error);
+        if (listContainer) {
+            listContainer.innerHTML = `<div style="text-align:center; padding: 20px; color:#e11d48; font-weight:500;">Problem loading data.<br><span style="font-size:13px; color:#64748b; font-weight:normal;">API might be busy or returning bad format. Move map slightly to try again.</span></div>`;
+        }
+    }
+}
+
+// 4. Fetch data immediately after page load
+fetchChargers();
+
+// 5. Fetch new data every time the user moves/pans the map
+map.on('moveend', () => {
+    // If "moveend" occurred because of a card click animation, skip the fetch to avoid deleting the opened popup. Restart safety lock.
+    if (isInteractingWithList) {
+        isInteractingWithList = false;
+        return;
+    }
+    fetchChargers();
+});
+
+// 6. LOCATION & POI SEARCH (Nominatim Geocoding + Autocomplete)
+const searchInput = document.getElementById('searchInput');
+const searchBtn = document.getElementById('searchBtn');
+const autocompleteList = document.getElementById('autocomplete-list');
+/** @type {number} Timeout handle for debouncing API requests */
+let searchDebounceTimer;
+
+/**
+ * Executes the map flight and processes the marker for a selected search location.
+ * @param {number} lat - Latitude
+ * @param {number} lon - Longitude
+ * @param {string} displayName - Human readable name of the location
+ */
+function executeSearch(lat, lon, displayName) {
+    if (searchMarker) {
+        map.removeLayer(searchMarker);
+    }
+
+    // Custom visually appealing map pin with a star inside for searched POI/Destination
+    const poiIcon = L.divIcon({
+        html: `<div style="background-color: #f59e0b; width: 34px; height: 34px; border-radius: 50% 50% 50% 0; transform: rotate(-45deg); display: flex; align-items: center; justify-content: center; box-shadow: -3px 3px 6px rgba(0,0,0,0.4); border: 2.5px solid white;">
+                 <div style="transform: rotate(45deg); display: flex; align-items: center; justify-content: center;">
+                   <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>
+                 </div>
+               </div>`,
+        className: 'custom-poi-icon',
+        iconSize: [34, 34],
+        iconAnchor: [17, 34],
+        popupAnchor: [0, -34]
+    });
+
+    searchMarker = L.marker([lat, lon], {
+        icon: poiIcon,
+        title: displayName,
+        zIndexOffset: 1000
+    }).addTo(map);
+
+    searchMarker.bindPopup(`<b>Your origin / POI:</b><br>${displayName}`).openPopup();
+
+    // Clear any previous routing lines when a new location is searched
+    clearRoute();
+    map.flyTo([lat, lon], 14, { animate: true, duration: 1.5 });
+}
+
+// Close autocomplete dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    if (e.target !== searchInput && e.target !== autocompleteList) {
+        autocompleteList.style.display = 'none';
+    }
+});
+
+// Trigger autocomplete while typing
+searchInput.addEventListener('input', function () {
+    clearTimeout(searchDebounceTimer);
+    const query = this.value.trim();
+
+    if (query.length < 3) {
+        autocompleteList.style.display = 'none';
+        return;
+    }
+
+    // Debounce to prevent API spam while typing
+    searchDebounceTimer = setTimeout(async () => {
+        const geocodeUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`;
+        try {
+            const response = await fetch(geocodeUrl);
+            const results = await response.json();
+
+            autocompleteList.innerHTML = '';
+
+            if (results && results.length > 0) {
+                autocompleteList.style.display = 'flex';
+
+                results.forEach(place => {
+                    const item = document.createElement('div');
+                    item.className = 'autocomplete-item';
+
+                    // Parse proper main title and secondary subtitle for aesthetics
+                    const mainName = (place.address && (place.address.road || place.address.city || place.address.town || place.address.village)) || place.name || 'Location';
+                    const detail = place.display_name.split(',').slice(0, 3).join(','); // Only first 3 address segments for preview
+
+                    item.innerHTML = `<div><strong>${mainName}</strong><small>${detail}</small></div>`;
+
+                    item.addEventListener('click', () => {
+                        searchInput.value = place.name || mainName;
+                        autocompleteList.style.display = 'none';
+                        executeSearch(parseFloat(place.lat), parseFloat(place.lon), place.display_name);
+                    });
+
+                    autocompleteList.appendChild(item);
+                });
+            } else {
+                autocompleteList.style.display = 'none';
+            }
+        } catch (error) {
+            console.error('Autocomplete error:', error);
+        }
+    }, 400); // 400ms delay before firing API request
+});
+
+/**
+ * Hard-click search button fallback logic (direct fetch without autocomplete)
+ */
+async function performSearch() {
+    const query = searchInput.value;
+    if (!query) return;
+
+    const geocodeUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`;
+    autocompleteList.style.display = 'none';
+
+    try {
+        const btnOriginalText = searchBtn.innerText;
+        searchBtn.innerText = '...';
+
+        const response = await fetch(geocodeUrl);
+        const results = await response.json();
+
+        searchBtn.innerText = btnOriginalText;
+
+        if (results && results.length > 0) {
+            const place = results[0];
+            executeSearch(parseFloat(place.lat), parseFloat(place.lon), place.display_name);
+        } else {
+            alert('Place not found. Try a different query.');
+        }
+    } catch (error) {
+        console.error('Error during geocoding:', error);
+        alert('Search service temporary unavailable.');
+    }
+}
+
+searchBtn.addEventListener('click', performSearch);
+searchInput.addEventListener('keypress', function (e) {
+    if (e.key === 'Enter') {
+        clearTimeout(searchDebounceTimer);
+        performSearch();
+    }
+});
+
+// 7. ROUTE CALCULATION (Leaflet Routing Machine)
+/**
+ * Triggers the Leaflet Routing Machine to calculate and draw a path
+ * between the currently active searchMarker and the specified destination.
+ * 
+ * @param {number} destLat - Destination Latitude
+ * @param {number} destLng - Destination Longitude
+ */
+window.calculateRouteTo = function (destLat, destLng) {
+    if (!searchMarker) {
+        alert('Please search for an origin place or POI first to calculate the route.');
+        document.getElementById('searchInput').focus();
+        return;
+    }
+
+    clearRoute();
+
+    const originLatLng = searchMarker.getLatLng();
+    const destLatLng = L.latLng(destLat, destLng);
+
+    routingControl = L.Routing.control({
+        waypoints: [
+            originLatLng,
+            destLatLng
+        ],
+        router: L.Routing.osrmv1({
+            language: 'en',
+            profile: 'driving'
+        }),
+        lineOptions: {
+            styles: [{ color: '#0284c7', opacity: 0.8, weight: 6 }]
+        },
+        createMarker: function () { return null; }, // Prevent duplicate routing markers 
+        show: true // Display the English step-by-step turn instructions panel
+    }).addTo(map);
+};
