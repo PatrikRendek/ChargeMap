@@ -92,11 +92,11 @@ WSGI_APPLICATION = "chargemap.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "chargemap",     # Name of the database you created in Postgres
-        "USER": "postgres",      # Your Postgres username
-        "PASSWORD": "postgres",  # Your Postgres password
-        "HOST": "127.0.0.1",     # Usually localhost
-        "PORT": "5432",          # Default Postgres port
+        "NAME": os.environ.get("DB_NAME", "chargemap"),
+        "USER": os.environ.get("DB_USER", "postgres"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", "postgres"),
+        "HOST": os.environ.get("DB_HOST", "127.0.0.1"),
+        "PORT": os.environ.get("DB_PORT", "5432"),
     }
 }
 
