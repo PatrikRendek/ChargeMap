@@ -29,12 +29,23 @@
     <div id="map"></div>
     
     <div class="user-header">
+        <div class="user-history-dropdown">
+            <button id="headerHistoryBtn" class="btn-history">History &#128338;</button>
+            <div id="header-history-list" class="header-history-list" style="display: none;"></div>
+        </div>
+        <div style="width: 1px; height: 20px; background: #cbd5e1; margin: 0 5px;"></div>
         <span>Logged in as: <b>{{ user.username }}</b></span>
         <form action="{% url 'logout' %}" method="post" style="margin: 0;">
             {% csrf_token %}
             <button type="submit" class="btn-logout">Sign Out</button>
         </form>
     </div>
+
+    <!-- Inject CSRF token for JS APIs -->
+    {% csrf_token %}
+    <script>
+        const csrftoken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+    </script>
 
     <!-- JS knižnica Leaflet -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

@@ -8,7 +8,9 @@ An interactive, responsive Django web application that maps electric vehicle (EV
 - **EV Charger Data:** Dynamically retrieves and visualizes data directly from the [OpenChargeMap API](https://openchargemap.org/site/develop/api).
 - **Status Indicators:** Chargers glow green (Operational) or red (Offline/Out of Service) based on live API checks.
 - **Smart POI Search:** Fast location geocoding powered by Nominatim OpenStreetMap with a debounced autocomplete dropdown list.
+- **Personalized History:** Authenticated users have their 5 most recent location queries securely stored in PostgreSQL and accessible via a history dropdown.
 - **Full Navigation:** Integration with Leaflet Routing Machine providing turn-by-turn routing directly from any searched place to a chosen charging station.
+- **Multiple Map Modes:** Users can seamlessly toggle between Standard OSM, Satellite imagery (Esri), Dark Mode, and Light Mode layouts.
 - **Authentication:** Users can log in manually or seamlessly using Google Social Login via `django-allauth`.
 
 ## 🛠️ Tech Stack

@@ -4,7 +4,10 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import login
 from django.http import JsonResponse
 from django.conf import settings
+from .models import SearchHistory
+from django.views.decorators.http import require_POST
 import requests
+import json
 
 @login_required
 def map_view(request):
@@ -52,3 +55,40 @@ def fetch_chargers_proxy(request):
     except ValueError as e:
         # Catches .json() parsing errors if the API returns a malformed string instead of a valid JSON array
         return JsonResponse({'error': f'Invalid JSON from API: {str(e)}'}, status=502)
+
+@login_required
+@require_POST
+def save_search(request):
+    try:
+        data = json.loads(request.body)
+        display_name = data.get('display_name')
+        lat = data.get('lat')
+        lon = data.get('lon')
+
+        if display_name and lat and lon:
+            # Check if this exact search was the last one, to avoid spam
+            last_search = SearchHistory.objects.filter(user=request.user).first()
+            if not last_search or last_search.display_name != display_name:
+                SearchHistory.objects.create(
+                    user=request.user,
+                    display_name=display_name,
+                    lat=lat,
+                    lon=lon
+                )
+            return JsonResponse({'status': 'success'})
+        return JsonResponse({'error': 'Missing parameters'}, status=400)
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@login_required
+def get_search_history(request):
+    history = SearchHistory.objects.filter(user=request.user)[:5]
+    data = [
+        {
+            'display_name': item.display_name,
+            'lat': item.lat,
+            'lon': item.lon
+        }
+        for item in history
+    ]
+    return JsonResponse(data, safe=False)

@@ -8,11 +8,39 @@
 // 1. Initialize the map, centered on Slovakia by default
 const map = L.map('map').setView([48.669, 19.699], 8);
 
-// 2. Add base tile layer (OpenStreetMap)
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+// 2. Add base tile layers
+const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-}).addTo(map);
+});
+
+const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP'
+});
+
+const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+});
+
+const lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a>'
+});
+
+// Set default layer
+osmLayer.addTo(map);
+
+// Add layer control widget to map
+const baseMaps = {
+    "Standard (OSM)": osmLayer,
+    "Satellite": satelliteLayer,
+    "Dark Mode": darkLayer,
+    "Light (Clean)": lightLayer
+};
+
+L.control.layers(baseMaps, null, { position: 'bottomright' }).addTo(map);
 
 // Global variables
 /** @type {L.Marker[]} Array to keep track of current charging station markers */
@@ -247,6 +275,24 @@ function executeSearch(lat, lon, displayName) {
 
     searchMarker.bindPopup(`<b>Your origin / POI:</b><br>${displayName}`).openPopup();
 
+    // Silently perform an API request to save this search history to User's database account
+    try {
+        fetch('/api/search-history/save/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrftoken
+            },
+            body: JSON.stringify({
+                display_name: displayName,
+                lat: lat,
+                lon: lon
+            })
+        });
+    } catch (e) {
+        console.error('Failed to save search history', e);
+    }
+
     // Clear any previous routing lines when a new location is searched
     clearRoute();
     map.flyTo([lat, lon], 14, { animate: true, duration: 1.5 });
@@ -256,6 +302,98 @@ function executeSearch(lat, lon, displayName) {
 document.addEventListener('click', (e) => {
     if (e.target !== searchInput && e.target !== autocompleteList) {
         autocompleteList.style.display = 'none';
+    }
+    if (headerHistoryList && headerHistoryList.style.display === 'block' && e.target !== headerHistoryBtn && !headerHistoryList.contains(e.target)) {
+        headerHistoryList.style.display = 'none';
+    }
+});
+
+// Top-Right User Menu History Dropdown
+const headerHistoryBtn = document.getElementById('headerHistoryBtn');
+const headerHistoryList = document.getElementById('header-history-list');
+
+headerHistoryBtn.addEventListener('click', async (e) => {
+    e.stopPropagation();
+
+    // Toggle menu
+    if (headerHistoryList.style.display === 'block') {
+        headerHistoryList.style.display = 'none';
+        return;
+    }
+
+    try {
+        const response = await fetch('/api/search-history/');
+        const results = await response.json();
+
+        headerHistoryList.innerHTML = '<div style="padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase;">Recent searches</div>';
+
+        if (results && results.length > 0) {
+            results.forEach(place => {
+                const item = document.createElement('div');
+                item.className = 'header-history-item';
+
+                const mainName = place.display_name.split(',')[0] || 'Location';
+                const detail = place.display_name.split(',').slice(1, 3).join(',');
+
+                item.innerHTML = `
+                    <span style="color:#94a3b8; font-size:18px;">&#128338;</span>
+                    <div style="overflow: hidden;"><strong>${mainName}</strong><small>${detail}</small></div>
+                `;
+
+                item.addEventListener('click', () => {
+                    headerHistoryList.style.display = 'none';
+                    searchInput.value = mainName;
+                    executeSearch(place.lat, place.lon, place.display_name);
+                });
+
+                headerHistoryList.appendChild(item);
+            });
+        } else {
+            headerHistoryList.innerHTML += '<div style="padding: 16px; text-align: center; color: #94a3b8; font-size: 13px;">No history yet.</div>';
+        }
+
+        headerHistoryList.style.display = 'block';
+    } catch (error) {
+        console.error('History fetch error:', error);
+    }
+});
+
+// Show recent history immediately when clicking into the empty search bar
+searchInput.addEventListener('click', async function () {
+    if (this.value.trim().length > 0) return; // If already typing, ignore
+
+    try {
+        const response = await fetch('/api/search-history/');
+        const results = await response.json();
+
+        if (results && results.length > 0 && this.value.trim().length === 0) {
+            autocompleteList.innerHTML = '<div style="padding: 8px 16px; background: #f8fafc; font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase;">Recent searches</div>';
+            autocompleteList.style.display = 'flex';
+
+            results.forEach(place => {
+                const item = document.createElement('div');
+                item.className = 'autocomplete-item';
+
+                const mainName = place.display_name.split(',')[0] || 'Location';
+                const detail = place.display_name.split(',').slice(1, 3).join(',');
+
+                // Clock icon to denote history
+                item.innerHTML = `<div style="display:flex; align-items:center; gap:8px;">
+                                    <span style="color:#94a3b8; font-size:16px;">&#128338;</span>
+                                    <div><strong>${mainName}</strong><small>${detail}</small></div>
+                                  </div>`;
+
+                item.addEventListener('click', () => {
+                    searchInput.value = mainName;
+                    autocompleteList.style.display = 'none';
+                    executeSearch(place.lat, place.lon, place.display_name);
+                });
+
+                autocompleteList.appendChild(item);
+            });
+        }
+    } catch (error) {
+        console.error('History load error:', error);
     }
 });
 

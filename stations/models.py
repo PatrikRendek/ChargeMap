@@ -1,3 +1,15 @@
 from django.db import models
+from django.contrib.auth.models import User
 
-# Create your models here.
+class SearchHistory(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='search_history')
+    display_name = models.CharField(max_length=255)
+    lat = models.FloatField()
+    lon = models.FloatField()
+    searched_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-searched_at']
+
+    def __str__(self):
+        return f"{self.user.username} - {self.display_name}"
