@@ -7,7 +7,9 @@ from django.conf import settings
 from .models import SearchHistory, FavoriteStation
 from django.views.decorators.http import require_POST
 import requests
+import traceback
 import json
+from django.core.cache import cache
 
 @login_required
 def map_view(request):
@@ -29,6 +31,13 @@ def fetch_chargers_proxy(request):
     if not boundingbox:
         return JsonResponse({'error': 'Missing boundingbox parameter'}, status=400)
     
+    # Use a safe cache key derived from the boundingbox
+    cache_key = f"chargers_{boundingbox.replace(',', '_')}"
+    cached_data = cache.get(cache_key)
+
+    if cached_data:
+        return JsonResponse(cached_data, safe=False)
+
     # Hide the API key on the server (loaded from .env) to bypass browser limitations/CORS securely
     api_key = getattr(settings, 'OPENCHARGEMAP_API_KEY', '')
     url = f"https://api.openchargemap.io/v3/poi/?output=json&maxresults=100&boundingbox={boundingbox}&key={api_key}"
@@ -49,6 +58,9 @@ def fetch_chargers_proxy(request):
         else:
             data = response.json()
             
+        # Store in cache for 10 minutes (600 seconds)
+        cache.set(cache_key, data, timeout=600)
+        
         return JsonResponse(data, safe=False)
     except requests.RequestException as e:
         return JsonResponse({'error': f'Failed to fetch from OpenChargeMap: {str(e)}'}, status=502)
