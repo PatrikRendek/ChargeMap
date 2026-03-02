@@ -51,6 +51,8 @@ let searchMarker = null;
 let routingControl = null;
 /** @type {boolean} Flag to prevent map moveend event from re-fetching data during flyTo animations */
 let isInteractingWithList = false;
+/** @type {L.CircleMarker[]} Array to keep track of temporary small POI markers near a charger */
+let activePoiMarkers = [];
 
 /**
  * Clears the currently active route and routing panel from the map.
@@ -59,6 +61,108 @@ function clearRoute() {
     if (routingControl) {
         map.removeControl(routingControl);
         routingControl = null;
+    }
+}
+
+/**
+ * Fetches nearby amenities (restaurants, cafes, etc.) within 400m of a charger using Overpass API.
+ * @param {number} stationId - ID of the charger to target the right HTML container
+ * @param {number} lat - Latitude
+ * @param {number} lng - Longitude
+ */
+async function loadNearbyAmenities(stationId, lat, lng) {
+    const containers = document.querySelectorAll(`.poi-container-${stationId}`);
+    if (containers.length === 0) return;
+
+    // Toggle logic: hide if already visible
+    const firstContainer = containers[0];
+    if (firstContainer.style.display === 'block') {
+        containers.forEach(c => c.style.display = 'none');
+        activePoiMarkers.forEach(m => map.removeLayer(m));
+        activePoiMarkers = [];
+        return;
+    }
+
+    // Hide others and clear old points
+    document.querySelectorAll('.poi-container').forEach(el => el.style.display = 'none');
+    activePoiMarkers.forEach(m => map.removeLayer(m));
+    activePoiMarkers = [];
+
+    if (firstContainer.dataset.loaded === 'true') {
+        containers.forEach(c => c.style.display = 'block');
+    }
+
+    containers.forEach(c => {
+        c.style.display = 'block';
+        c.innerHTML = '<div style="color: #64748b; font-style: italic;">Loading nearby places...</div>';
+    });
+
+    try {
+        const query = `[out:json][timeout:10];node(around:400,${lat},${lng})[amenity~"restaurant|cafe|fast_food|pharmacy|supermarket"];out 20;`;
+        const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+        const res = await fetch(url);
+        const data = await res.json();
+
+        let html = '<div style="font-weight: 600; color: #475569; margin-bottom: 5px;">Nearby (400m radius):</div>';
+
+        if (data.elements && data.elements.length > 0) {
+            data.elements.forEach(poi => {
+                const name = poi.tags.name || 'Unnamed place';
+                const type = (poi.tags.amenity || 'Place').replace('_', ' ');
+
+                // Customize POI icon based on amenity type
+                let iconChar = '📍';
+                let iconColor = '#64748b'; // Default Grey
+
+                if (type.includes('restaurant') || type.includes('fast food')) {
+                    iconChar = '🍔';
+                    iconColor = '#ef4444'; // Red
+                } else if (type.includes('cafe')) {
+                    iconChar = '☕';
+                    iconColor = '#8b5cf6'; // Purple
+                } else if (type.includes('pharmacy')) {
+                    iconChar = '💊';
+                    iconColor = '#10b981'; // Green
+                } else if (type.includes('supermarket')) {
+                    iconChar = '🛒';
+                    iconColor = '#3b82f6'; // Blue
+                }
+
+                html += `<div style="margin-bottom: 4px; display: flex; align-items: start; gap: 6px; padding: 4px; background: #fff; border-radius: 6px; border: 1px solid #e2e8f0;">
+                            <span style="font-size: 14px; line-height: 1;">${iconChar}</span>
+                            <div>
+                                <strong style="color: #0f172a; display: block; line-height: 1.2;">${name}</strong> 
+                                <span style="color: #94a3b8; font-size: 10px; text-transform: uppercase;">${type}</span>
+                            </div>
+                         </div>`;
+
+                // Draw custom styled map markers for POIs
+                const customIcon = L.divIcon({
+                    html: `<div style="background-color: ${iconColor}; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 3px 6px rgba(0,0,0,0.3); border: 2px solid white; font-size: 13px;">${iconChar}</div>`,
+                    className: 'custom-poi-marker',
+                    iconSize: [26, 26],
+                    iconAnchor: [13, 13],
+                    popupAnchor: [0, -13]
+                });
+
+                const m = L.marker([poi.lat, poi.lon], { icon: customIcon })
+                    .bindPopup(`<b>${name}</b><br><span style="text-transform: capitalize;">${type}</span>`)
+                    .addTo(map);
+
+                activePoiMarkers.push(m);
+            });
+        } else {
+            html += '<div style="color: #94a3b8; font-size: 12px; margin-top: 5px;">No recorded amenities found nearby.</div>';
+        }
+
+        containers.forEach(c => {
+            c.innerHTML = html;
+            c.dataset.loaded = 'true';
+        });
+
+    } catch (err) {
+        console.error("Overpass API error:", err);
+        containers.forEach(c => c.innerHTML = '<div style="color: #ef4444;">Failed to load nearby places.</div>');
     }
 }
 
@@ -135,14 +239,17 @@ async function fetchChargers() {
                     if (maxKw > 0) powerInfo = `<br/><b>Max power:</b> ${maxKw} kW`;
                 }
 
-                // Route navigation button shown in the map popup
-                const navigateBtnHtml = `<div style="margin-top: 10px; text-align: center;">
+                // Route navigation and POIs buttons shown in the map popup
+                const popupActionsHtml = `<div style="margin-top: 10px; display: flex; gap: 8px; justify-content: center;">
+                    <button onclick="loadNearbyAmenities(${station.ID}, ${lat}, ${lng})" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; padding:6px 12px; border-radius:15px; cursor:pointer; font-weight:600; font-family:'Outfit', sans-serif; transition: all 0.2s;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='#f1f5f9'">POIs</button>
                     <button onclick="calculateRouteTo(${lat}, ${lng})" style="background:linear-gradient(135deg, #0284c7, #059669); color:white; border:none; padding:6px 12px; border-radius:15px; cursor:pointer; font-weight:600; font-family:'Outfit', sans-serif;">Navigate Here</button>
-                </div>`;
+                </div>
+                <!-- Popup internal POI container -->
+                <div class="poi-container poi-container-${station.ID}" style="display:none; margin-top: 10px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 12px; max-height: 160px; overflow-y: auto;"></div>`;
 
                 // HTML content for the map Marker popup
                 const popupContent = `
-                    <div style="font-size: 14px; font-family: 'Outfit', sans-serif; min-width: 200px;">
+                    <div style="font-size: 14px; font-family: 'Outfit', sans-serif; min-width: 220px;">
                         ${popupImageHtml}
                         <h3 style="margin: 0 0 5px 0; color: #0284c7; font-size: 16px;">${title}</h3>
                         <div style="color: #64748b; font-size: 12px; margin-bottom: 5px;">${operator} ${statusInfo}</div>
@@ -150,7 +257,7 @@ async function fetchChargers() {
                         ${usageCost}
                         ${points}
                         ${powerInfo}
-                        ${navigateBtnHtml}
+                        ${popupActionsHtml}
                     </div>
                 `;
 
@@ -188,8 +295,12 @@ async function fetchChargers() {
                     <div class="station-address">${address}</div>
                     <div style="font-size:12px; color:#334155; display:flex; justify-content:space-between; align-items:center;">
                         <span>${powerInfo.replace('<br/>', '') || 'Power n/a'}</span>
-                        <button onclick="event.stopPropagation(); calculateRouteTo(${lat}, ${lng})" style="background:#e2e8f0; color:#0f172a; border:none; padding:4px 10px; border-radius:12px; cursor:pointer; font-family:'Outfit',sans-serif; font-size:11px; font-weight:600;">Route</button>
+                        <div style="display:flex; gap: 6px;">
+                            <button onclick="event.stopPropagation(); loadNearbyAmenities(${station.ID}, ${lat}, ${lng})" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; padding:4px 10px; border-radius:12px; cursor:pointer; font-family:'Outfit',sans-serif; font-size:11px; font-weight:600; transition: all 0.2s;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='#f1f5f9'">POIs</button>
+                            <button onclick="event.stopPropagation(); calculateRouteTo(${lat}, ${lng})" style="background:#e2e8f0; color:#0f172a; border:none; padding:4px 10px; border-radius:12px; cursor:pointer; font-family:'Outfit',sans-serif; font-size:11px; font-weight:600; transition: all 0.2s;" onmouseover="this.style.background='#cbd5e1'" onmouseout="this.style.background='#e2e8f0'">Route</button>
+                        </div>
                     </div>
+                    <div class="poi-container poi-container-${station.ID}" style="display:none; margin-top: 10px; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; font-size: 11px;"></div>
                 `;
 
                 // Hovering over the card opens the map popup subtly
