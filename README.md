@@ -1,5 +1,7 @@
 # ⚡ ChargeMap Slovakia
 
+**🚀 Live Demo:** [https://chargemap.onrender.com/](https://chargemap.onrender.com/)
+
 An interactive, responsive Django web application that maps electric vehicle (EV) charging stations across Slovakia and Europe. Features real-time routing, live operational status checks, POI Search Autocomplete, and Google OAuth secure authentication.
 
 ## ✨ Features
