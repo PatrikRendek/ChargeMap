@@ -8,6 +8,9 @@ An interactive, responsive Django web application that maps electric vehicle (EV
 
 - **Interactive Map:** Powered by Leaflet.js with custom-designed visual markers.
 - **EV Charger Data:** Dynamically retrieves and visualizes data directly from the [OpenChargeMap API](https://openchargemap.org/site/develop/api).
+- **IP Geolocation:** The map intelligently centers on the user's specific real-world location silently on initial load.
+- **Favorites System:** Logged-in users can heart ❤️ their favorite charging stations to save them to their personalized profile dropdown list.
+- **Nearby POIs:** Click a button next to any station to fetch nearby amenities (cafes, restaurants, supermarkets) in a 400m radius using the Overpass API.
 - **Status Indicators:** Chargers glow green (Operational) or red (Offline/Out of Service) based on live API checks.
 - **Smart POI Search:** Fast location geocoding powered by Nominatim OpenStreetMap with a debounced autocomplete dropdown list.
 - **Personalized History:** Authenticated users have their 5 most recent location queries securely stored in PostgreSQL and accessible via a history dropdown.
@@ -17,11 +20,13 @@ An interactive, responsive Django web application that maps electric vehicle (EV
 
 ## 🛠️ Tech Stack
 
-- **Backend:** Python 3.x, Django 5.x
+- **Backend:** Python 3.12, Django 5.x
 - **Frontend:** Vanilla JavaScript, HTML5, CSS3, Flexbox Layouts
 - **Libraries:** Leaflet.js, Leaflet Routing Machine
 - **Authentication:** django-allauth (with Google OAuth Provider)
 - **Database:** PostgreSQL
+- **Caching:** Redis (`django-redis` used for backend API proxy acceleration)
+- **Deployment:** Docker, Gunicorn, Whitenoise (Production-ready for Render.com)
 
 ---
 
@@ -67,11 +72,16 @@ OPENCHARGEMAP_API_KEY=your_openchargemap_api_key_here
 GOOGLE_OAUTH_CLIENT_ID=your_google_client_id_here
 GOOGLE_OAUTH_CLIENT_SECRET=your_google_secret_here
 
+# Local Development DB
 DB_NAME=chargemap
 DB_USER=postgres
 DB_PASSWORD=your_db_password
 DB_HOST=127.0.0.1
 DB_PORT=5432
+
+# Production (Render)
+# DATABASE_URL=postgres://...
+# REDIS_URL=rediss://...
 ```
 *Note: You can obtain your free OpenChargeMap API key by registering a developer account at openchargemap.org.*
 
