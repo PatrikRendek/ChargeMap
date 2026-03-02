@@ -4,7 +4,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django.contrib.auth import login
 from django.http import JsonResponse
 from django.conf import settings
-from .models import SearchHistory
+from .models import SearchHistory, FavoriteStation
 from django.views.decorators.http import require_POST
 import requests
 import json
@@ -92,3 +92,34 @@ def get_search_history(request):
         for item in history
     ]
     return JsonResponse(data, safe=False)
+
+@login_required
+@require_POST
+def toggle_favorite(request):
+    try:
+        data = json.loads(request.body)
+        station_id = data.get('station_id')
+        station_name = data.get('station_name')
+
+        if not station_id or not station_name:
+            return JsonResponse({'error': 'Missing parameters'}, status=400)
+
+        favorite = FavoriteStation.objects.filter(user=request.user, station_id=station_id).first()
+        
+        if favorite:
+            favorite.delete()
+            return JsonResponse({'status': 'removed'})
+        else:
+            FavoriteStation.objects.create(
+                user=request.user, 
+                station_id=station_id, 
+                station_name=station_name
+            )
+            return JsonResponse({'status': 'added'})
+    except Exception as e:
+        return JsonResponse({'error': str(e)}, status=500)
+
+@login_required
+def get_favorites(request):
+    favorites = list(FavoriteStation.objects.filter(user=request.user).values('station_id', 'station_name'))
+    return JsonResponse(favorites, safe=False)

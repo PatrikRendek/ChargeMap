@@ -8,6 +8,17 @@
 // 1. Initialize the map, centered on Slovakia by default
 const map = L.map('map').setView([48.669, 19.699], 8);
 
+// Attempt to globally locate user via an IP Geolocation API silently
+fetch('https://get.geojs.io/v1/ip/geo.json')
+    .then(response => response.json())
+    .then(data => {
+        if (data && data.latitude && data.longitude) {
+            // Animate to user's local city/country region safely
+            map.flyTo([data.latitude, data.longitude], 13, { duration: 2 });
+        }
+    })
+    .catch(err => console.error("Silent IP geocoding failed:", err));
+
 // 2. Add base tile layers
 const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -53,6 +64,66 @@ let routingControl = null;
 let isInteractingWithList = false;
 /** @type {L.CircleMarker[]} Array to keep track of temporary small POI markers near a charger */
 let activePoiMarkers = [];
+<<<<<<< HEAD
+=======
+/** @type {Set<number>} Set to keep track of user favorite station IDs */
+let userFavorites = new Set();
+
+/**
+ * Sync favorites from backend into local Set
+ */
+async function loadFavorites() {
+    try {
+        const response = await fetch('/api/favorites/');
+        const data = await response.json();
+        userFavorites = new Set(data);
+    } catch (err) {
+        console.error("Failed to load favorites:", err);
+    }
+}
+
+/**
+ * Toggle favorite status
+ */
+async function toggleFavorite(stationId, stationName, elementIdentifier) {
+    try {
+        // Optimistic UI update
+        const buttonTexts = document.querySelectorAll(`.fav-btn-${stationId}`);
+        const isCurrentlyFav = userFavorites.has(stationId);
+
+        if (isCurrentlyFav) {
+            userFavorites.delete(stationId);
+            buttonTexts.forEach(el => {
+                el.innerHTML = '♡';
+                el.style.color = '#94a3b8';
+            });
+        } else {
+            userFavorites.add(stationId);
+            buttonTexts.forEach(el => {
+                el.innerHTML = '❤️';
+                el.style.color = '#ef4444';
+            });
+        }
+
+        // Backend sync
+        const CSRFTokenElement = document.querySelector('[name=csrfmiddlewaretoken]');
+
+        await fetch('/api/favorites/toggle/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': CSRFTokenElement ? CSRFTokenElement.value : ''
+            },
+            body: JSON.stringify({
+                station_id: stationId,
+                station_name: stationName
+            })
+        });
+    } catch (err) {
+        console.error("Failed to toggle favorite:", err);
+    }
+}
+>>>>>>> 3ef2a01 (Feat: Add Favorite stations and IP Geolocation map centering)
 
 /**
  * Clears the currently active route and routing panel from the map.
@@ -240,7 +311,13 @@ async function fetchChargers() {
                 }
 
                 // Route navigation and POIs buttons shown in the map popup
+                const isFav = userFavorites.has(station.ID);
+                const favIcon = isFav ? '❤️' : '♡';
+                const favColor = isFav ? '#ef4444' : '#94a3b8';
+                const escapedTitle = title.replace(/'/g, "\\'");
+
                 const popupActionsHtml = `<div style="margin-top: 10px; display: flex; gap: 8px; justify-content: center;">
+                    <button onclick="toggleFavorite(${station.ID}, '${escapedTitle}')" style="background:#f8fafc; color:#475569; border:1px solid #cbd5e1; padding:6px 10px; border-radius:15px; cursor:pointer; font-weight:600; transition: all 0.2s; font-size: 14px;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='#f8fafc'"><span class="fav-btn-${station.ID}" style="color:${favColor}">${favIcon}</span></button>
                     <button onclick="loadNearbyAmenities(${station.ID}, ${lat}, ${lng})" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; padding:6px 12px; border-radius:15px; cursor:pointer; font-weight:600; font-family:'Outfit', sans-serif; transition: all 0.2s;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='#f1f5f9'">POIs</button>
                     <button onclick="calculateRouteTo(${lat}, ${lng})" style="background:linear-gradient(135deg, #0284c7, #059669); color:white; border:none; padding:6px 12px; border-radius:15px; cursor:pointer; font-weight:600; font-family:'Outfit', sans-serif;">Navigate Here</button>
                 </div>
@@ -294,7 +371,10 @@ async function fetchChargers() {
                     <div style="font-size:11px; color:#94a3b8; margin-bottom:4px; text-transform: uppercase; font-weight:600;">${operator} ${statusInfo}</div>
                     <div class="station-address">${address}</div>
                     <div style="font-size:12px; color:#334155; display:flex; justify-content:space-between; align-items:center;">
-                        <span>${powerInfo.replace('<br/>', '') || 'Power n/a'}</span>
+                        <span style="display:flex; align-items:center; gap: 6px;">
+                            <button onclick="event.stopPropagation(); toggleFavorite(${station.ID}, '${escapedTitle}')" style="background:transparent; border:none; cursor:pointer; font-size:16px; padding:0;"><span class="fav-btn-${station.ID}" style="color:${favColor}">${favIcon}</span></button>
+                            ${powerInfo.replace('<br/>', '') || 'Power n/a'}
+                        </span>
                         <div style="display:flex; gap: 6px;">
                             <button onclick="event.stopPropagation(); loadNearbyAmenities(${station.ID}, ${lat}, ${lng})" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1; padding:4px 10px; border-radius:12px; cursor:pointer; font-family:'Outfit',sans-serif; font-size:11px; font-weight:600; transition: all 0.2s;" onmouseover="this.style.background='#e2e8f0'" onmouseout="this.style.background='#f1f5f9'">POIs</button>
                             <button onclick="event.stopPropagation(); calculateRouteTo(${lat}, ${lng})" style="background:#e2e8f0; color:#0f172a; border:none; padding:4px 10px; border-radius:12px; cursor:pointer; font-family:'Outfit',sans-serif; font-size:11px; font-weight:600; transition: all 0.2s;" onmouseover="this.style.background='#cbd5e1'" onmouseout="this.style.background='#e2e8f0'">Route</button>
@@ -337,7 +417,7 @@ async function fetchChargers() {
 // 4. Fetch data immediately after page load
 fetchChargers();
 
-// 5. Fetch new data every time the user moves/pans the map
+// Start watching map movements once initialized
 map.on('moveend', () => {
     // If "moveend" occurred because of a card click animation, skip the fetch to avoid deleting the opened popup. Restart safety lock.
     if (isInteractingWithList) {
@@ -417,11 +497,64 @@ document.addEventListener('click', (e) => {
     if (headerHistoryList && headerHistoryList.style.display === 'block' && e.target !== headerHistoryBtn && !headerHistoryList.contains(e.target)) {
         headerHistoryList.style.display = 'none';
     }
+    if (headerFavoritesList && headerFavoritesList.style.display === 'block' && e.target !== headerFavoritesBtn && !headerFavoritesList.contains(e.target)) {
+        headerFavoritesList.style.display = 'none';
+    }
 });
 
 // Top-Right User Menu History Dropdown
 const headerHistoryBtn = document.getElementById('headerHistoryBtn');
 const headerHistoryList = document.getElementById('header-history-list');
+
+const headerFavoritesBtn = document.getElementById('headerFavoritesBtn');
+const headerFavoritesList = document.getElementById('header-favorites-list');
+
+if (headerFavoritesBtn) {
+    headerFavoritesBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+
+        if (headerFavoritesList.style.display === 'block') {
+            headerFavoritesList.style.display = 'none';
+            return;
+        }
+
+        headerHistoryList.style.display = 'none'; // Close the other one
+
+        try {
+            const response = await fetch('/api/favorites/');
+            const results = await response.json();
+
+            headerFavoritesList.innerHTML = '<div style="padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase;">Saved Stations</div>';
+
+            if (results && results.length > 0) {
+                results.forEach(fav => {
+                    const item = document.createElement('div');
+                    item.className = 'header-history-item';
+
+                    item.innerHTML = `
+                        <span style="color:#ef4444; font-size:18px;">❤️</span>
+                        <div style="overflow: hidden;"><strong>${fav.station_name}</strong></div>
+                    `;
+
+                    // Not strictly geocoded via DB to avoid complexity, but we can search for it visually
+                    item.addEventListener('click', () => {
+                        headerFavoritesList.style.display = 'none';
+                        searchInput.value = fav.station_name;
+                        performSearch(); // Triggers the Nominatim search manually
+                    });
+
+                    headerFavoritesList.appendChild(item);
+                });
+            } else {
+                headerFavoritesList.innerHTML += '<div style="padding: 16px; text-align: center; color: #94a3b8; font-size: 13px;">No favorites yet.</div>';
+            }
+
+            headerFavoritesList.style.display = 'block';
+        } catch (error) {
+            console.error('Favorites fetch error:', error);
+        }
+    });
+}
 
 headerHistoryBtn.addEventListener('click', async (e) => {
     e.stopPropagation();
@@ -431,6 +564,8 @@ headerHistoryBtn.addEventListener('click', async (e) => {
         headerHistoryList.style.display = 'none';
         return;
     }
+
+    if (headerFavoritesList) headerFavoritesList.style.display = 'none'; // Close the other one
 
     try {
         const response = await fetch('/api/search-history/');
