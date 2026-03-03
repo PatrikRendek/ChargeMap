@@ -72,11 +72,23 @@ let userFavorites = new Set();
  */
 async function loadFavorites() {
     try {
-        const response = await fetch('/api/favorites/');
-        const data = await response.json();
-        userFavorites = new Set(data);
+        const query = `query { myFavorites { stationId } }`;
+        const response = await fetch('/graphql/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                // csrftoken is globally available here
+            },
+            body: JSON.stringify({ query })
+        });
+        const result = await response.json();
+        if (result.data && result.data.myFavorites) {
+            const data = result.data.myFavorites.map(f => f.stationId);
+            userFavorites = new Set(data);
+        }
     } catch (err) {
-        console.error("Failed to load favorites:", err);
+        console.error("Failed to load favorites via GraphQL:", err);
     }
 }
 
@@ -103,22 +115,34 @@ async function toggleFavorite(stationId, stationName, elementIdentifier) {
             });
         }
 
-        // Backend sync
+        // Backend sync via GraphQL Mutation
         const CSRFTokenElement = document.querySelector('[name=csrfmiddlewaretoken]');
 
-        await fetch('/api/favorites/toggle/', {
+        const mutation = `
+            mutation ToggleFav($id: Int!, $name: String!) {
+                toggleFavorite(stationId: $id, stationName: $name) {
+                    status
+                    stationId
+                }
+            }
+        `;
+
+        await fetch('/graphql/', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-CSRFToken': CSRFTokenElement ? CSRFTokenElement.value : ''
             },
             body: JSON.stringify({
-                station_id: stationId,
-                station_name: stationName
+                query: mutation,
+                variables: {
+                    id: stationId,
+                    name: stationName
+                }
             })
         });
     } catch (err) {
-        console.error("Failed to toggle favorite:", err);
+        console.error("Failed to toggle favorite via GraphQL:", err);
     }
 }
 
@@ -463,22 +487,32 @@ function executeSearch(lat, lon, displayName) {
 
     searchMarker.bindPopup(`<b>Your origin / POI:</b><br>${displayName}`).openPopup();
 
-    // Silently perform an API request to save this search history to User's database account
+    // Silently perform an API request to save this search history to User's database account via GraphQL
     try {
-        fetch('/api/search-history/save/', {
+        const mutation = `
+            mutation SaveHistory($name: String!, $lat: Float!, $lon: Float!) {
+                saveSearchHistory(displayName: $name, lat: $lat, lon: $lon) {
+                    status
+                }
+            }
+        `;
+        fetch('/graphql/', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'X-CSRFToken': csrftoken
             },
             body: JSON.stringify({
-                display_name: displayName,
-                lat: lat,
-                lon: lon
+                query: mutation,
+                variables: {
+                    name: displayName,
+                    lat: lat,
+                    lon: lon
+                }
             })
         });
     } catch (e) {
-        console.error('Failed to save search history', e);
+        console.error('Failed to save search history via GraphQL', e);
     }
 
     // Clear any previous routing lines when a new location is searched
@@ -518,8 +552,14 @@ if (headerFavoritesBtn) {
         headerHistoryList.style.display = 'none'; // Close the other one
 
         try {
-            const response = await fetch('/api/favorites/');
-            const results = await response.json();
+            const query = `query { myFavorites { stationName } }`;
+            const response = await fetch('/graphql/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query })
+            });
+            const result = await response.json();
+            const results = result.data.myFavorites;
 
             headerFavoritesList.innerHTML = '<div style="padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase;">Saved Stations</div>';
 
@@ -530,13 +570,13 @@ if (headerFavoritesBtn) {
 
                     item.innerHTML = `
                         <span style="color:#ef4444; font-size:18px;">❤️</span>
-                        <div style="overflow: hidden;"><strong>${fav.station_name}</strong></div>
+                        <div style="overflow: hidden;"><strong>${fav.stationName}</strong></div>
                     `;
 
                     // Not strictly geocoded via DB to avoid complexity, but we can search for it visually
                     item.addEventListener('click', () => {
                         headerFavoritesList.style.display = 'none';
-                        searchInput.value = fav.station_name;
+                        searchInput.value = fav.stationName;
                         performSearch(); // Triggers the Nominatim search manually
                     });
 
@@ -565,8 +605,14 @@ headerHistoryBtn.addEventListener('click', async (e) => {
     if (headerFavoritesList) headerFavoritesList.style.display = 'none'; // Close the other one
 
     try {
-        const response = await fetch('/api/search-history/');
-        const results = await response.json();
+        const query = `query { myHistory(limit: 5) { displayName lat lon } }`;
+        const response = await fetch('/graphql/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query })
+        });
+        const result = await response.json();
+        const results = result.data.myHistory;
 
         headerHistoryList.innerHTML = '<div style="padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase;">Recent searches</div>';
 
@@ -575,8 +621,8 @@ headerHistoryBtn.addEventListener('click', async (e) => {
                 const item = document.createElement('div');
                 item.className = 'header-history-item';
 
-                const mainName = place.display_name.split(',')[0] || 'Location';
-                const detail = place.display_name.split(',').slice(1, 3).join(',');
+                const mainName = place.displayName.split(',')[0] || 'Location';
+                const detail = place.displayName.split(',').slice(1, 3).join(',');
 
                 item.innerHTML = `
                     <span style="color:#94a3b8; font-size:18px;">&#128338;</span>
@@ -586,7 +632,7 @@ headerHistoryBtn.addEventListener('click', async (e) => {
                 item.addEventListener('click', () => {
                     headerHistoryList.style.display = 'none';
                     searchInput.value = mainName;
-                    executeSearch(place.lat, place.lon, place.display_name);
+                    executeSearch(place.lat, place.lon, place.displayName);
                 });
 
                 headerHistoryList.appendChild(item);
@@ -606,8 +652,14 @@ searchInput.addEventListener('click', async function () {
     if (this.value.trim().length > 0) return; // If already typing, ignore
 
     try {
-        const response = await fetch('/api/search-history/');
-        const results = await response.json();
+        const query = `query { myHistory(limit: 5) { displayName lat lon } }`;
+        const response = await fetch('/graphql/', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query })
+        });
+        const result = await response.json();
+        const results = result.data.myHistory;
 
         if (results && results.length > 0 && this.value.trim().length === 0) {
             autocompleteList.innerHTML = '<div style="padding: 8px 16px; background: #f8fafc; font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase;">Recent searches</div>';
@@ -617,8 +669,8 @@ searchInput.addEventListener('click', async function () {
                 const item = document.createElement('div');
                 item.className = 'autocomplete-item';
 
-                const mainName = place.display_name.split(',')[0] || 'Location';
-                const detail = place.display_name.split(',').slice(1, 3).join(',');
+                const mainName = place.displayName.split(',')[0] || 'Location';
+                const detail = place.displayName.split(',').slice(1, 3).join(',');
 
                 // Clock icon to denote history
                 item.innerHTML = `<div style="display:flex; align-items:center; gap:8px;">
@@ -629,14 +681,14 @@ searchInput.addEventListener('click', async function () {
                 item.addEventListener('click', () => {
                     searchInput.value = mainName;
                     autocompleteList.style.display = 'none';
-                    executeSearch(place.lat, place.lon, place.display_name);
+                    executeSearch(place.lat, place.lon, place.displayName);
                 });
 
                 autocompleteList.appendChild(item);
             });
         }
     } catch (error) {
-        console.error('History load error:', error);
+        console.error('History load error API:', error);
     }
 });
 

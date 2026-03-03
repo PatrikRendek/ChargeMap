@@ -54,6 +54,7 @@ INSTALLED_APPS = [
     "allauth.account",
     "allauth.socialaccount",
     "allauth.socialaccount.providers.google",
+    "graphene_django",
 ]
 
 MIDDLEWARE = [
@@ -183,4 +184,9 @@ SOCIALACCOUNT_PROVIDERS = {
             'key': ''
         }
     }
+}
+
+# GraphQL Configuration
+GRAPHENE = {
+    "SCHEMA": "chargemap.schema.schema"
 }
